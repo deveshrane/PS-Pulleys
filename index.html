@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="style.css" />
+    <title>Pulleys</title>
+  </head>
+
+  <body>
+    <div class="app">
+      <aside class="panel" id="panel">
+        <h1>Pulleys</h1>
+        <p class="sub">Single fixed, single movable and the block and tackle</p>
+
+        <div class="modes grid" role="group" aria-label="Arrangement">
+          <button type="button" id="mFixed" aria-pressed="true">Single fixed</button>
+          <button type="button" id="mMovable" aria-pressed="false">Single movable</button>
+          <button type="button" id="mRedirect" aria-pressed="false">Movable + fixed</button>
+          <button type="button" id="mTackle" aria-pressed="false">Block &amp; tackle</button>
+        </div>
+
+        <div class="control" id="countBox" hidden>
+          <div class="row">
+            <label for="count">Pulleys in the system</label>
+            <input type="number" id="countNum" min="2" max="6" step="1" value="4" />
+          </div>
+          <input type="range" id="count" min="2" max="6" step="1" value="4" />
+          <p class="note" id="split"></p>
+        </div>
+
+        <div class="control">
+          <div class="row">
+            <label for="load">Load</label>
+            <input type="number" id="loadNum" min="5" max="200" step="5" value="50" />
+            <span class="unit">kgf</span>
+          </div>
+          <input type="range" id="load" min="5" max="200" step="5" value="50" />
+        </div>
+
+        <div class="actions">
+          <button type="button" id="pull">Pull the rope</button>
+          <button type="button" id="reset">Reset</button>
+        </div>
+
+        <p class="section-label">Working</p>
+        <div class="work" id="work"></div>
+
+        <p class="hint" id="hint"></p>
+      </aside>
+
+      <main class="stage">
+        <section class="card">
+          <canvas id="canvas"></canvas>
+        </section>
+      </main>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
