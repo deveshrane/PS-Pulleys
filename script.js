@@ -73,7 +73,9 @@
      ------------------------------------------------------------------ */
 
   function end(on) { return { kind: "end", on: on }; }
-  function wheel(on) { return { kind: "pulley", on: on }; }
+  // i numbers the wheel down its own block, so its height is known
+  // without having to walk the route again.
+  function wheel(on, i) { return { kind: "pulley", on: on, i: i }; }
   function free() { return { kind: "free" }; }
 
   // True for anything that rides with the load: a movable pulley, the hook
@@ -85,10 +87,10 @@
   }
 
   function route(mode, n) {
-    if (mode === "fixed") return [end("load"), wheel("upper"), free()];
-    if (mode === "movable") return [end("ceiling"), wheel("lower"), free()];
+    if (mode === "fixed") return [end("load"), wheel("upper", 0), free()];
+    if (mode === "movable") return [end("ceiling"), wheel("lower", 0), free()];
     if (mode === "redirect") {
-      return [end("ceiling"), wheel("lower"), wheel("upper"), free()];
+      return [end("ceiling"), wheel("lower", 0), wheel("upper", 0), free()];
     }
 
     // Block and tackle. The chapter keeps the movable block either equal
@@ -96,12 +98,12 @@
     // end to whichever block makes the free end leave an upper pulley — so
     // the effort is pulled downward. Deriving both from n alone means that
     // arrangement is the only one reachable.
-    var lower = Math.floor(n / 2);
     var odd = n % 2 === 1;
     var nodes = [end(odd ? "lower" : "upper")];
     var side = odd ? "upper" : "lower";
+    var iu = 0, il = 0;
     for (var k = 0; k < n; k++) {
-      nodes.push(wheel(side));
+      nodes.push(wheel(side, side === "upper" ? iu++ : il++));
       side = side === "upper" ? "lower" : "upper";
     }
     nodes.push(free());
@@ -236,9 +238,19 @@
     line(x - 5, y2, x + 5, y2, color, 1.2, false);
     beside(W, text, x, (y1 + y2) / 2, color, 12);
   }
-
   /* ------------------------------------------------------------------
      Layout
+
+     One tall column, as the chapter draws it: the pulleys of a block sit
+     one above another on a central strap, the fixed block hanging from a
+     crosshead at the support and the movable block carrying a hook.
+
+     Every strand is vertical — that is the paraxial idealisation the
+     whole of section B rests on, and it is what makes each supporting
+     strand shorten by exactly the height the load rises. Stacked wheels
+     would put same-side strands on top of one another, so each is drawn
+     a little further out than the last. The fan is lateral only: it
+     changes no length, and the strands stay countable.
      ------------------------------------------------------------------ */
 
   function layout(W, H) {
@@ -247,94 +259,125 @@
     var flags = supportFlags(nodes);
     var S = strandCount(flags);
 
-    var padL = 74, padR = 104;
-    var gap = Math.max(22, Math.min(56, (W - padL - padR) / Math.max(1, segs - 1)));
-    var r = gap / 2;
-    var width = (segs - 1) * gap;
-    var x0 = padL + Math.max(0, (W - padL - padR - width) / 2);
+    var i, k;
+    var upperCount = 0, lowerCount = 0;
+    for (k = 1; k < nodes.length - 1; k++) {
+      if (nodes[k].on === "upper") upperCount++; else lowerCount++;
+    }
+    var wheels = upperCount + lowerCount;
 
     var g = {
       W: W, H: H, nodes: nodes, segs: segs, flags: flags, S: S,
-      gap: gap, r: r, x0: x0,
-      ceilY: 32, plateH: 9, clear: 9, hang: 15, hook: 15, loadH: 34
+      upperCount: upperCount, lowerCount: lowerCount,
+      hasUpper: upperCount > 0, hasLower: lowerCount > 0,
+      ceilY: 32, head: 13, strapPad: 9, hook: 16, loadH: 34, strapW: 11
     };
 
-    // Where each strand runs, and where each wheel sits between two of them.
+    // The column has to hold every wheel, the gap the blocks close up as
+    // the load rises, and the load with its reading underneath.
+    var fixedRoom = g.ceilY + g.head + 2 * g.strapPad + g.hook + g.loadH + 50 + 30;
+    var perWheel = 2.42;                       // diameters, counting the gaps
+    g.r = Math.max(11, Math.min(25, (H - fixedRoom - 58) / (perWheel * wheels)));
+    g.pitch = 2 * g.r + 9;
+    // Kept small: the wrap has to reach from one strand across to the
+    // next, so a wide fan turns a half circle round the wheel into a
+    // long flat loop that no longer reads as rope in a groove.
+    g.fan = Math.max(4.5, Math.min(7, g.r * 0.28));
+
+    // Which side of the column each strand runs down, and how far out.
+    // Sides alternate because a wheel takes the rope in on one side and
+    // lets it out on the other; the effort is put on the right.
+    var A = ((segs - 1) % 2 === 0) ? 1 : -1;
+    var nRight = 0, nLeft = 0;
+    g.side = []; g.rank = [];
+    for (i = 0; i < segs; i++) {
+      var s = (i % 2 === 0) ? A : -A;
+      g.side.push(s);
+      g.rank.push(s > 0 ? nRight++ : nLeft++);
+    }
+    var outR = g.r + 3 + Math.max(0, nRight - 1) * g.fan;
+    var outL = g.r + 3 + Math.max(0, nLeft - 1) * g.fan;
+
+    // Centred, but leaving the margins the readings need either side.
+    var padL = 96, padR = 122;
+    g.cx = Math.max(padL + outL, Math.min(W - padR - outR, W / 2 - 20));
+
     g.strandX = [];
-    for (var i = 0; i < segs; i++) g.strandX.push(x0 + i * gap);
-    g.wheelX = [];
-    for (var j = 1; j <= segs - 1; j++) g.wheelX.push(x0 + (j - 1) * gap + r);
-
-    g.upperY = g.ceilY + g.hang + g.plateH + g.clear + r;
-
-    g.hasUpper = false;
-    g.hasLower = false;
-    for (var k = 1; k < nodes.length - 1; k++) {
-      if (nodes[k].on === "upper") g.hasUpper = true;
-      else g.hasLower = true;
+    for (i = 0; i < segs; i++) {
+      g.strandX.push(g.cx + g.side[i] * (g.r + 3 + g.rank[i] * g.fan));
     }
 
-    // The load hangs from the movable block where there is one, and
-    // straight off the rope end where there is not.
-    // Low enough to sit near the floor, but clear of the load's arrow and
-    // its value, which are drawn below the box.
+    // Upper block, hung from the support.
+    g.upperY0 = g.ceilY + g.head + g.strapPad + g.r;
+    g.upperLast = g.upperY0 + Math.max(0, upperCount - 1) * g.pitch;
+    g.upperTieY = g.upperLast + g.r + g.strapPad;        // foot of its strap
+
+    // Movable block, sitting low with the load below it.
     var floorY = H - 66;
-    g.carrierDrop = g.hasLower
-      ? r + g.clear + g.plateH + g.hook + g.loadH
-      : g.loadH;
-    g.lowerY0 = floorY - g.carrierDrop;
-    g.loadTopY0 = g.hasLower ? 0 : floorY - g.loadH;
+    g.loadTopY0 = floorY - g.loadH;
+    var lowerLast0 = g.loadTopY0 - g.hook - g.strapPad - g.r;
+    g.lowerY00 = lowerLast0 - Math.max(0, lowerCount - 1) * g.pitch;
 
-    var lowest = g.hasUpper ? g.upperY + 2 * r + 36 : g.ceilY + 46;
-    var headroom = Math.max(0, (g.hasLower ? g.lowerY0 : g.loadTopY0) - lowest);
+    // How far the movable block may rise before it meets the fixed one.
+    var ceiling = g.hasUpper ? g.upperTieY + g.strapPad + g.r + 20
+      : g.ceilY + g.r + 26;
+    var carrier0 = g.hasLower ? g.lowerY00 : g.loadTopY0;
+    var headroom = Math.max(0, carrier0 - ceiling);
 
-    // The free end leaves the last wheel: downward off an upper one,
-    // upward off a movable one.
     var last = nodes[nodes.length - 2];
     g.effortDown = last.on === "upper";
-    g.tail0 = 64;
+    g.tail0 = 62;
 
     // The hand carries its arrow and its reading past it, so the room it
     // needs runs well beyond the grip itself.
-    var handReach = 48;
+    var reach = 48;
+    var lastWheelY0 = g.effortDown ? g.upperLast : lowerLast0;
     var handRoom = g.effortDown
-      ? (H - handReach) - (g.upperY + g.tail0)
-      : (g.lowerY0 - g.tail0) - (g.ceilY + handReach);
+      ? (H - reach) - (lastWheelY0 + g.tail0)
+      : (lowerLast0 - g.tail0) - (g.ceilY + reach);
 
-    // Both ends of the motion have to stay on the sheet: the blocks must
-    // not meet, and the hand — which travels S times as far — must not run
-    // off the bottom.
+    // Both ends of the motion must stay on the sheet: the blocks must not
+    // meet, and the hand — which travels S times as far — must not run off.
     g.maxD = Math.max(0, Math.min(headroom, handRoom / S));
     g.d = state.lift * g.maxD;
 
-    g.lowerY = g.lowerY0 - g.d;
+    g.lowerY0 = g.lowerY00 - g.d;
+    g.lowerLast = lowerLast0 - g.d;
+    g.lowerTieY = g.lowerY0 - g.r - g.strapPad;          // head of its strap
     g.loadTopY = g.loadTopY0 - g.d;
+    g.carrierY = g.hasLower ? g.lowerY0 : g.loadTopY;
+    g.carrierY0 = carrier0;
 
     // The tail to the hand is whatever length of rope the rest of the
     // route has given up. This is the only place the effort's travel is
     // decided, and it is decided by the rope being inextensible.
     g.tail = g.tail0 + (ropeBody(g, 0) - ropeBody(g, g.d));
     g.handX = g.strandX[segs - 1];
-    g.handY = g.effortDown
-      ? g.upperY + g.tail
-      : (g.lowerY0 - g.d) - g.tail;
-
-    g.handY0 = g.effortDown ? g.upperY + g.tail0 : g.lowerY0 - g.tail0;
+    var lastWheelY = g.effortDown ? g.upperLast : g.lowerLast;
+    g.handY = g.effortDown ? lastWheelY + g.tail : lastWheelY - g.tail;
+    g.handY0 = g.effortDown ? lastWheelY0 + g.tail0 : lowerLast0 - g.tail0;
     return g;
   }
 
+  // Where a node sits vertically, for a movable block that has risen by d.
+  // Wheels are numbered down their own block, in rope order.
   function yAt(node, g, d) {
-    if (node.kind === "pulley") return node.on === "upper" ? g.upperY : g.lowerY0 - d;
+    if (node.kind === "pulley") {
+      return node.on === "upper"
+        ? g.upperY0 + node.i * g.pitch
+        : (g.lowerY00 - d) + node.i * g.pitch;
+    }
     if (node.kind === "end") {
       if (node.on === "ceiling") return g.ceilY;
-      if (node.on === "upper") return g.upperY - g.r - g.clear;
-      if (node.on === "lower") return (g.lowerY0 - d) + g.r + g.clear;
-      return g.loadTopY0 - d;                     // the load hangs off this end
+      if (node.on === "upper") return g.upperTieY;
+      if (node.on === "lower") return (g.lowerY00 - d) - g.r - g.strapPad;
+      return g.loadTopY0 - d;                   // the load hangs off this end
     }
     return 0;
   }
 
-  // Every part of the rope except the free tail.
+  // Every part of the rope except the free tail. The wraps are the same
+  // length whatever the blocks do, so only the straight runs are counted.
   function ropeBody(g, d) {
     var sum = 0;
     for (var i = 0; i < g.nodes.length - 2; i++) {
@@ -366,65 +409,68 @@
     label("RIGID SUPPORT", 12, g.ceilY - 24, COLOR.note, "left", "middle", 11);
   }
 
-  function wheelXs(g, side) {
-    var out = [];
-    for (var j = 1; j < g.nodes.length - 1; j++) {
-      if (g.nodes[j].on === side) out.push(g.wheelX[j - 1]);
-    }
-    return out;
+  // The strap that carries the axles of one block, drawn over its wheels
+  // so it reads as one piece running the length of the block.
+  function drawStrap(g, topY, botY) {
+    roundRect(g.cx - g.strapW / 2, topY, g.strapW, botY - topY, 5,
+      COLOR.metal, COLOR.metalDark, 1.3);
+    line(g.cx, topY + 3, g.cx, botY - 3, "rgba(255,255,255,0.35)", 1.2, false);
   }
 
-  // A block: the plate that carries the axles, with cheeks reaching past
-  // the wheels. Both sit clear of the rope, which wraps the far side.
-  function drawBlock(g, xs, cy, above, tieX) {
-    if (!xs.length) return;
-    var lo = Math.min.apply(null, xs) - g.r - 7;
-    var hi = Math.max.apply(null, xs) + g.r + 7;
-    // A dead end made off to this block may lie outside its wheels, and
-    // the plate has to reach it or the knot hangs on nothing.
-    if (tieX !== null) { lo = Math.min(lo, tieX - 8); hi = Math.max(hi, tieX + 8); }
-    var py = above ? cy - g.r - g.clear - g.plateH : cy + g.r + g.clear;
-    roundRect(lo, py, hi - lo, g.plateH, 3, COLOR.metal, COLOR.metalDark, 1.2);
-
-    var reach = above ? cy + g.r * 0.5 : cy - g.r * 0.5;
-    line(lo + 2.5, above ? py + g.plateH : py, lo + 2.5, reach, COLOR.metal, 3, false);
-    line(hi - 2.5, above ? py + g.plateH : py, hi - 2.5, reach, COLOR.metal, 3, false);
-    return { lo: lo, hi: hi, py: py, mid: (lo + hi) / 2 };
-  }
-
-  function drawWheel(g, cx, cy) {
+  function drawWheel(g, cy) {
     ctx.beginPath();
     ctx.setLineDash([]);
-    ctx.arc(cx, cy, g.r, 0, Math.PI * 2);
+    ctx.arc(g.cx, cy, g.r, 0, Math.PI * 2);
     ctx.fillStyle = COLOR.wheelFill;
     ctx.fill();
     ctx.strokeStyle = COLOR.wheel;
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(cx, cy, g.r * 0.42, 0, Math.PI * 2);
+    ctx.arc(g.cx, cy, g.r * 0.5, 0, Math.PI * 2);
     ctx.strokeStyle = COLOR.wheel;
     ctx.lineWidth = 1.1;
     ctx.stroke();
-    dot(cx, cy, COLOR.metalDark, 2.4);
   }
 
-  // Half a wrap at a time, so a wheel that takes a load-bearing strand in
-  // and lets the effort strand out is drawn as both.
-  function drawWrap(g, cx, cy, above, colIn, colOut) {
-    var mid = above ? -Math.PI / 2 : Math.PI / 2;
-    ctx.lineCap = "round";
+  // A hook: the shank down from the strap, then the curl.
+  function drawHook(g, topY) {
+    var hr = g.hook * 0.42;
+    var cy = topY + g.hook - hr;
+    line(g.cx, topY, g.cx, cy, COLOR.metalDark, 3.4, false);
     ctx.beginPath();
     ctx.setLineDash([]);
-    ctx.arc(cx, cy, g.r, Math.PI, mid, !above);
-    ctx.strokeStyle = colIn;
-    ctx.lineWidth = 2.6;
+    ctx.arc(g.cx, cy, hr, Math.PI * 0.85, Math.PI * 0.15, false);
+    ctx.strokeStyle = COLOR.metalDark;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
     ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cy, g.r, mid, 0, !above);
-    ctx.strokeStyle = colOut;
-    ctx.lineWidth = 2.6;
-    ctx.stroke();
+    ctx.lineCap = "butt";
+  }
+
+  // Half an ellipse from one strand across to the other, bulging clear of
+  // the rim. Drawn in two halves so a wheel that takes a load-bearing
+  // strand in and lets the effort out is shown as both.
+  function drawWrap(g, xIn, xOut, wy, above, colIn, colOut) {
+    var midX = (xIn + xOut) / 2;
+    var rx = (xOut - xIn) / 2;
+    var ry = (above ? -1 : 1) * (g.r + 3);
+    var steps = 26;
+    ctx.lineCap = "round";
+    for (var half = 0; half < 2; half++) {
+      ctx.beginPath();
+      ctx.setLineDash([]);
+      for (var i = 0; i <= steps / 2; i++) {
+        var t = (half * steps / 2 + i) / steps;
+        var a = Math.PI * t;
+        var x = midX - rx * Math.cos(a);
+        var y = wy + ry * Math.sin(a);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = half === 0 ? colIn : colOut;
+      ctx.lineWidth = 2.6;
+      ctx.stroke();
+    }
     ctx.lineCap = "butt";
   }
 
@@ -432,32 +478,33 @@
     var i;
     for (i = 0; i < g.segs; i++) {
       var x = g.strandX[i];
-      var a = nodeY(g.nodes[i], g);
-      var b = nodeY(g.nodes[i + 1], g);
-      line(x, a, x, b, g.flags[i] ? COLOR.support : COLOR.effort, 2.6, false);
+      line(x, nodeY(g.nodes[i], g), x, nodeY(g.nodes[i + 1], g),
+        g.flags[i] ? COLOR.support : COLOR.effort, 2.6, false);
     }
     for (i = 1; i < g.nodes.length - 1; i++) {
       var node = g.nodes[i];
-      drawWrap(g, g.wheelX[i - 1], nodeY(node, g), node.on === "upper",
+      drawWrap(g, g.strandX[i - 1], g.strandX[i], nodeY(node, g),
+        node.on === "upper",
         g.flags[i - 1] ? COLOR.support : COLOR.effort,
         g.flags[i] ? COLOR.support : COLOR.effort);
     }
 
-    // Knot where a dead end is made off.
+    // The knot where a dead end is made off to a block or to the support.
     var first = g.nodes[0];
     if (first.kind === "end" && first.on !== "load") {
-      dot(g.strandX[0], nodeY(first, g), COLOR.support, 4);
+      var kx = g.strandX[0], ky = nodeY(first, g);
+      // Made off to a block, the end runs in to its strap; made off to the
+      // support it simply stops there.
+      if (first.on !== "ceiling") line(kx, ky, g.cx, ky, COLOR.support, 2.6, false);
+      dot(kx, ky, COLOR.support, 4);
     }
   }
 
   function drawLoad(g) {
     var cx, topY;
     if (g.hasLower) {
-      var xs = wheelXs(g, "lower");
-      cx = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
-      topY = g.lowerY + g.r + g.clear + g.plateH;
-      line(cx, topY, cx, topY + g.hook, COLOR.metalDark, 3, false);
-      topY += g.hook;
+      cx = g.cx;
+      topY = g.lowerLast + g.r + g.strapPad + g.hook;
     } else {
       cx = g.strandX[0];
       topY = g.loadTopY;
@@ -468,14 +515,12 @@
     arrow(cx, topY + g.loadH + 6, cx, topY + g.loadH + 30, COLOR.load, 2);
     label(fmtNum(state.load) + " kgf = " + fmtNum(state.load * G) + " N",
       cx, topY + g.loadH + 42, COLOR.load, "center", "middle", 12);
-    return { cx: cx, topY: topY };
   }
 
   function drawEffort(g) {
     var dir = g.effortDown ? 1 : -1;
     var x = g.handX, y = g.handY;
 
-    // The grab handle, which is what the pointer takes hold of.
     ctx.beginPath();
     ctx.setLineDash([]);
     ctx.arc(x, y, 7.5, 0, Math.PI * 2);
@@ -492,16 +537,23 @@
   }
 
   function drawTensions(g) {
-    var mid;
-    if (g.hasLower && g.hasUpper) mid = (g.upperY + g.lowerY) / 2;
-    else if (g.hasLower) mid = (g.ceilY + g.lowerY) / 2;
-    else mid = (g.loadTopY + g.upperY) / 2;
+    // In the clear water between the two blocks, where every strand runs.
+    var top = g.hasUpper ? g.upperTieY : g.ceilY;
+    var bot = g.hasLower ? g.lowerTieY : g.loadTopY;
+    var mid = (top + bot) / 2;
 
-    // Set beside each strand, not on it: the halo that keeps the letter
-    // legible would otherwise cut a white gap through the rope.
+    // A tight fan leaves no room to set these side by side, so they are
+    // stepped down the page instead — one for each strand, as the figure
+    // in the chapter has them.
+    var step = 17;
+    var lo = mid - (g.S - 1) * step / 2;
+    var seen = 0;
     for (var i = 0; i < g.segs; i++) {
       if (!g.flags[i]) continue;
-      label("T", g.strandX[i] + 7, mid, COLOR.support, "left", "middle", 13);
+      var s = g.side[i];
+      label("T", g.strandX[i] + s * 7, lo + seen * step, COLOR.support,
+        s > 0 ? "left" : "right", "middle", 13);
+      seen++;
     }
     label(g.S + (g.S === 1 ? " strand supports the load" : " strands support the load"),
       12, g.ceilY + 24, COLOR.support, "left", "middle", 13);
@@ -509,11 +561,11 @@
 
   function drawDistances(g) {
     if (g.d < 1) return;
-    var carrierY = g.hasLower ? g.lowerY : g.loadTopY;
-    vspan(g.W, Math.max(14, g.x0 - 42), carrierY, carrierY + g.d,
+    var leftX = Math.max(14, g.cx - g.r - 5 - 76);
+    vspan(g.W, leftX, g.carrierY, g.carrierY + g.d,
       "d" + String.fromCharCode(0x2097) + " = " + metres(g.d) + " m", COLOR.mark);
 
-    var hx = Math.min(g.W - 26, g.handX + 44);
+    var hx = Math.min(g.W - 26, g.handX + 46);
     vspan(g.W, hx, g.handY0, g.handY,
       "d" + String.fromCharCode(0x2091) + " = " + metres(g.d * g.S) + " m", COLOR.effort);
   }
@@ -537,25 +589,28 @@
 
     drawCeiling(g);
 
-    var upper = wheelXs(g, "upper");
-    var lowerXs = wheelXs(g, "lower");
-
-    // Where the rope's dead end is made off, if it is made off to a block.
-    var first = g.nodes[0];
-    var tiedTo = first.kind === "end" ? first.on : null;
-    var tieX = g.strandX[0];
-
-    if (upper.length) {
-      var ub = drawBlock(g, upper, g.upperY, true, tiedTo === "upper" ? tieX : null);
-      line(ub.mid, g.ceilY, ub.mid, ub.py, COLOR.metalDark, 3, false);
-    }
-    if (lowerXs.length) {
-      drawBlock(g, lowerXs, g.lowerY, false, tiedTo === "lower" ? tieX : null);
-    }
-
     var i;
-    for (i = 0; i < upper.length; i++) drawWheel(g, upper[i], g.upperY);
-    for (i = 0; i < lowerXs.length; i++) drawWheel(g, lowerXs[i], g.lowerY);
+    // The fixed block: crosshead at the support, strap, wheels, strap
+    // again over them so it reads as one piece.
+    if (g.hasUpper) {
+      roundRect(g.cx - g.r - 6, g.ceilY, 2 * (g.r + 6), g.head, 4,
+        COLOR.metalDark, null, 0);
+      for (i = 0; i < g.upperCount; i++) drawWheel(g, g.upperY0 + i * g.pitch);
+      drawStrap(g, g.ceilY + g.head - 2, g.upperTieY);
+      for (i = 0; i < g.upperCount; i++) {
+        dot(g.cx, g.upperY0 + i * g.pitch, COLOR.metalDark, 2.6);
+      }
+    }
+
+    // The movable block, and the hook it carries the load on.
+    if (g.hasLower) {
+      for (i = 0; i < g.lowerCount; i++) drawWheel(g, g.lowerY0 + i * g.pitch);
+      drawStrap(g, g.lowerTieY, g.lowerLast + g.r + g.strapPad);
+      for (i = 0; i < g.lowerCount; i++) {
+        dot(g.cx, g.lowerY0 + i * g.pitch, COLOR.metalDark, 2.6);
+      }
+      drawHook(g, g.lowerLast + g.r + g.strapPad);
+    }
 
     drawRope(g);
     drawLoad(g);
