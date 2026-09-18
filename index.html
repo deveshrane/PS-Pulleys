@@ -38,6 +38,17 @@
           <input type="range" id="load" min="5" max="200" step="5" value="50" />
         </div>
 
+        <div class="control">
+          <div class="row">
+            <label for="eff">Efficiency</label>
+            <input type="number" id="effNum" min="30" max="100" step="1" value="100" />
+            <span class="unit">%</span>
+          </div>
+          <input type="range" id="eff" min="30" max="100" step="1" value="100" />
+          <p class="note">100% is the ideal machine. Below it, friction and the
+            weight of the moving parts take their share.</p>
+        </div>
+
         <div class="actions">
           <button type="button" id="pull">Pull the rope</button>
           <button type="button" id="reset">Reset</button>

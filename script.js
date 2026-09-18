@@ -41,6 +41,12 @@
   // on p.70 use 9.8, so the value in force here is stated on the diagram.
   var G = 10;
 
+  // How far above or below a wheel a strand starts coming in to the rim.
+  // Fixed, so a lead is the same shape wherever the blocks happen to be:
+  // only the straight runs change length, which is what keeps the effort's
+  // travel an exact multiple of the load's.
+  var LEAD = 26;
+
   // How far the load rises at a full pull. Fixed in metres rather than in
   // pixels so the readings do not change with the size of the window.
   var LIFT_M = 0.5;
@@ -62,6 +68,7 @@
     mode: "fixed",
     n: 4,              // total pulleys, block and tackle only
     load: 50,          // kgf
+    eff: 100,          // efficiency, per cent
     lift: 0,           // 0 to 1, how far through the pull we are
     playing: false,
     t0: 0,
@@ -285,23 +292,21 @@
     var off = [];
     for (i = 0; i < g.segs; i++) off.push(base + g.rank[i] * fan);
 
-    // A wheel sits centred between the two strands it carries, and is
-    // sized to them. Sizing it to the nearer one instead left the wrap
-    // wider than it was tall on every second wheel, so the rope bulged
-    // off the rim rather than hugging it; centring makes each wrap a true
-    // half circle. The nudge off the middle of the block is at most half
-    // the fan, a few pixels, so the column still reads as a column.
+    // Every wheel sits on the middle of its block. It takes its size
+    // from the nearer of the two strands it carries, so that strand lies
+    // on the rim; the further one comes in to meet the rim over a short
+    // fixed lead, the way rope actually converges onto a sheave. The wrap
+    // itself is then a true half circle about the wheel's own centre.
     var R = { upper: [], lower: [] };
-    var nudge = { upper: [], lower: [] };
     for (j = 1; j < g.nodes.length - 1; j++) {
       var node = g.nodes[j];
-      var a = off[j - 1], b = off[j];
-      R[node.on][node.i] = (a + b) / 2 - 3;
-      nudge[node.on][node.i] = g.side[j] * (b - a) / 2;
+      R[node.on][node.i] = Math.min(off[j - 1], off[j]) - 3;
     }
 
     // Stack each block, allowing for the wheels being different sizes.
-    var sp = 7;
+    // Rims are set far enough apart that the wraps, which stand three
+    // pixels off each rim, cannot touch.
+    var sp = 13;
     function stack(list) {
       if (!list.length) return { dy: [], span: 0 };
       var dy = [0];
@@ -314,7 +319,7 @@
     var up = stack(R.upper), low = stack(R.lower);
 
     return {
-      fan: fan, off: off, R: R, nudge: nudge,
+      fan: fan, off: off, R: R,
       upperDY: up.dy, lowerDY: low.dy,
       upperR0: R.upper[0] || 0, lowerR0: R.lower[0] || 0,
       upperLastR: R.upper.length ? R.upper[R.upper.length - 1] : 0,
@@ -386,9 +391,7 @@
     } else {
       g.cx = Math.max(padL + p.widest, Math.min(W - padR - p.widest, W / 2 - 24));
       g.cxOf = { lower: [], upper: [] };
-      for (j = 1; j < nodes.length - 1; j++) {
-        g.cxOf[nodes[j].on][nodes[j].i] = g.cx + p.nudge[nodes[j].on][nodes[j].i];
-      }
+      for (j = 1; j < nodes.length - 1; j++) g.cxOf[nodes[j].on][nodes[j].i] = g.cx;
       for (i = 0; i < segs; i++) g.strandX.push(g.cx + g.side[i] * p.off[i]);
     }
 
@@ -406,8 +409,10 @@
     var lowerLast0 = g.loadTopY0 - g.hook - p.lowerLastR - g.clearRope;
     g.lowerY00 = lowerLast0 - (p.lowerDY[g.lowerCount - 1] || 0);
 
+    // The blocks must stop far enough apart that the straight run of
+    // every strand between them survives both its leads.
     var stopAt = g.hasUpper
-      ? g.upperTieY + p.lowerR0 + 22
+      ? g.upperTieY + p.lowerR0 + 2 * LEAD + 16
       : g.ceilY + p.lowerR0 + 30;
     var carrier0 = g.hasLower ? g.lowerY00 : g.loadTopY0;
     var headroom = Math.max(0, carrier0 - stopAt);
@@ -540,20 +545,31 @@
   // Half an ellipse from the strand coming in across to the one going
   // out, clearing the rim. Drawn in two halves so the wheel that takes a
   // load-bearing strand in and lets the effort out is shown as both.
-  function drawWrap(g, xIn, xOut, wy, r, above, colIn, colOut) {
-    var midX = (xIn + xOut) / 2;
-    var rx = (xOut - xIn) / 2;
-    var ry = (above ? -1 : 1) * (r + 3);
-    var steps = 26;
+  // An upper wheel is wrapped over the top, so both its strands hang
+  // below it; a lower wheel the other way about.
+  function leadDir(node) {
+    return node.kind !== "pulley" ? 0 : (node.on === "upper" ? 1 : -1);
+  }
+
+  // Where strand i stops being straight, at whichever of its two ends.
+  function strandEnd(g, i, which) {
+    var node = g.nodes[i + which];
+    return { x: g.strandX[i], y: nodeY(node, g) + leadDir(node) * LEAD };
+  }
+
+  // A true half circle about the wheel's own centre, drawn in two
+  // quarters so a wheel that takes a load-bearing strand in and lets the
+  // effort out is shown as both.
+  function drawWrap(cx, cy, rho, above, sIn, colIn, colOut) {
+    var steps = 28, k = above ? -1 : 1;
     ctx.lineCap = "round";
     for (var half = 0; half < 2; half++) {
       ctx.beginPath();
       ctx.setLineDash([]);
       for (var i = 0; i <= steps / 2; i++) {
-        var t = (half * steps / 2 + i) / steps;
-        var a = Math.PI * t;
-        var x = midX - rx * Math.cos(a);
-        var y = wy + ry * Math.sin(a);
+        var a = Math.PI * (half * steps / 2 + i) / steps;
+        var x = cx + sIn * rho * Math.cos(a);
+        var y = cy + k * rho * Math.sin(a);
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.strokeStyle = half === 0 ? colIn : colOut;
@@ -566,37 +582,43 @@
   function drawRope(g) {
     var i;
     for (i = 0; i < g.segs; i++) {
-      var x = g.strandX[i];
-      line(x, nodeY(g.nodes[i], g), x, nodeY(g.nodes[i + 1], g),
-        g.flags[i] ? COLOR.support : COLOR.effort, 2.6, false);
+      var a = strandEnd(g, i, 0), b = strandEnd(g, i, 1);
+      line(a.x, a.y, b.x, b.y, g.flags[i] ? COLOR.support : COLOR.effort, 2.6, false);
     }
     for (i = 1; i < g.nodes.length - 1; i++) {
       var node = g.nodes[i];
-      drawWrap(g, g.strandX[i - 1], g.strandX[i], nodeY(node, g), wheelR(g, node),
-        node.on === "upper",
-        g.flags[i - 1] ? COLOR.support : COLOR.effort,
-        g.flags[i] ? COLOR.support : COLOR.effort);
+      var cx = wheelX(g, node), wy = nodeY(node, g);
+      var rho = wheelR(g, node) + 3;
+      var above = node.on === "upper", dir = above ? 1 : -1;
+      var xIn = g.strandX[i - 1], xOut = g.strandX[i];
+      var sIn = xIn < cx ? -1 : 1, sOut = xOut < cx ? -1 : 1;
+      var cIn = g.flags[i - 1] ? COLOR.support : COLOR.effort;
+      var cOut = g.flags[i] ? COLOR.support : COLOR.effort;
+      // The lead: the further strand comes in to meet the rim. The nearer
+      // one already lies on it, and its lead is simply vertical.
+      line(xIn, wy + dir * LEAD, cx + sIn * rho, wy, cIn, 2.6, false);
+      line(xOut, wy + dir * LEAD, cx + sOut * rho, wy, cOut, 2.6, false);
+      drawWrap(cx, wy, rho, above, sIn, cIn, cOut);
     }
+  }
 
+  // The becket the dead end is made off to: a straight lug off the strap,
+  // drawn as the hardware it is. Laid over the rope, like the rest of the
+  // block.
+  function drawBecket(g) {
     var first = g.nodes[0];
-    if (first.kind === "end" && first.on !== "load") {
-      var kx = g.strandX[0], ky = nodeY(first, g);
-      // Made off to a block, the end runs in to its strap; made off to the
-      // support it simply stops there.
-      if (first.on !== "ceiling") {
-        // A straight lug off the strap, drawn as the hardware it is. The
-        // rope used to turn a right angle here to reach the strap, which
-        // read as a bend in the rope itself.
-        line(g.cx, ky, kx, ky, COLOR.metalDark, 3.4, false);
-        ctx.beginPath();
-        ctx.setLineDash([]);
-        ctx.arc(kx, ky, 4.5, 0, Math.PI * 2);
-        ctx.strokeStyle = COLOR.metalDark;
-        ctx.lineWidth = 2.4;
-        ctx.stroke();
-      }
-      dot(kx, ky, COLOR.support, 3.4);
+    if (first.kind !== "end" || first.on === "load") return;
+    var kx = g.strandX[0], ky = nodeY(first, g);
+    if (first.on !== "ceiling") {
+      line(g.cx, ky, kx, ky, COLOR.metalDark, 3.4, false);
+      ctx.beginPath();
+      ctx.setLineDash([]);
+      ctx.arc(kx, ky, 4.5, 0, Math.PI * 2);
+      ctx.strokeStyle = COLOR.metalDark;
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
     }
+    dot(kx, ky, COLOR.support, 3.4);
   }
 
   function drawLoad(g) {
@@ -624,47 +646,36 @@
     ctx.stroke();
 
     arrow(x, y + dir * 12, x, y + dir * 36, COLOR.effort, 2.2);
-    var E = state.load / g.S;
+    var E = effortOf(g.S);
     beside(g.W, "E = " + fmtNum(E) + " kgf = " + fmtNum(E * G) + " N",
       x + 4, y + dir * 26, COLOR.effort, 12);
   }
 
   // Every strand that carries the load is marked with the tension in it,
   // pulling upwards — which is the whole reason the load is held up.
+  // Every strand is marked with the tension in it, pulling upwards —
+  // the effort's strand included, since the rope pulls up on the hand
+  // just as it pulls up on the load. The letter stays beside its own
+  // arrow, stepped down the page so no two land at the same height.
   function drawTensions(g) {
     var top = g.hasUpper ? g.upperTieY : g.ceilY;
     var bot = g.hasLower ? g.lowerTieY : g.loadTopY;
     var mid = (top + bot) / 2;
-    var step = 19;
-    var lo = mid - (g.S - 1) * step / 2;
-    var seen = 0;
-
-    // The strands of a block run only a few pixels apart, so a letter set
-    // against one of them lands on its neighbour. The arrow stays on its
-    // own strand and the letter goes outside the whole bundle, level with
-    // it — each T reads across to the arrow at its own height.
-    var edge = { "-1": Infinity, "1": -Infinity };
-    for (var k = 0; k < g.segs; k++) {
-      var sx = g.strandX[k];
-      if (g.side[k] > 0) edge["1"] = Math.max(edge["1"], sx);
-      else edge["-1"] = Math.min(edge["-1"], sx);
-    }
+    var step = 20;
+    var lo = mid - (g.segs - 1) * step / 2;
 
     for (var i = 0; i < g.segs; i++) {
-      if (!g.flags[i]) continue;
       var x = g.strandX[i];
-      var a = nodeY(g.nodes[i], g), b = nodeY(g.nodes[i + 1], g);
+      var a = strandEnd(g, i, 0).y, b = strandEnd(g, i, 1).y;
       var hi = Math.min(a, b), low = Math.max(a, b);
+      if (low - hi < 28) continue;
       // Kept on its own strand: a short one — the free end of a movable
       // pulley at rest, say — has nowhere near the middle of the diagram.
-      var y = Math.max(hi + 15, Math.min(low - 13, lo + seen * step));
-      if (low - hi > 26) {
-        arrow(x, y + 11, x, y - 11, COLOR.support, 1.8);
-        var sd = g.side[i];
-        label("T", edge[String(sd)] + sd * 11, y, COLOR.support,
-          sd > 0 ? "left" : "right", "middle", 13);
-      }
-      seen++;
+      var y = Math.max(hi + 15, Math.min(low - 14, lo + i * step));
+      var col = g.flags[i] ? COLOR.support : COLOR.effort;
+      arrow(x, y + 11, x, y - 11, col, 1.8);
+      label("T", x + g.side[i] * 9, y, col,
+        g.side[i] > 0 ? "left" : "right", "middle", 13);
     }
     label(g.S + (g.S === 1 ? " strand supports the load" : " strands support the load"),
       12, g.ceilY + 24, COLOR.support, "left", "middle", 13);
@@ -709,21 +720,29 @@
 
     drawCeiling(g);
 
-    var p = g.p, i, cx;
+    var p = g.p, i;
+    var cxU = g.sideBySide ? g.cxOf.upper[0] : g.cx;
+    var cxL = g.sideBySide ? g.cxOf.lower[0] : g.cx;
+
+    // Sheaves, then the rope, then the block itself. The rope passes
+    // behind the block, which is what a side view of a real one shows —
+    // the strap and the crosshead stand between you and the groove.
+    for (i = 0; i < g.upperCount; i++) {
+      drawWheel(g, g.cxOf.upper[i], g.upperY0 + p.upperDY[i], p.R.upper[i]);
+    }
+    for (i = 0; i < g.lowerCount; i++) {
+      drawWheel(g, g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i], p.R.lower[i]);
+    }
+
+    drawRope(g);
 
     // The fixed block. Its strap runs from the crosshead down to the last
     // axle and stops there — it is a holder, not a spike through the wheel.
     if (g.hasUpper) {
-      cx = g.sideBySide ? g.cxOf.upper[0] : g.cx;
       var tieUp = g.nodes[0].kind === "end" && g.nodes[0].on === "upper";
-      roundRect(cx - p.upperR0 - 7, g.ceilY, 2 * (p.upperR0 + 7), g.head, 4,
+      roundRect(cxU - p.upperR0 - 8, g.ceilY, 2 * (p.upperR0 + 8), g.head, 4,
         COLOR.metalDark, null, 0);
-      for (i = 0; i < g.upperCount; i++) {
-        drawWheel(g, g.cxOf.upper[i], g.upperY0 + p.upperDY[i], p.R.upper[i]);
-      }
-      // Over the wheels, so the holder reads as one piece, and stopping at
-      // the last axle rather than running on through the block.
-      drawStrap(g, cx, g.ceilY + g.head - 2, tieUp ? g.upperTieY : g.upperLast);
+      drawStrap(g, cxU, g.ceilY + g.head - 2, tieUp ? g.upperTieY : g.upperLast);
       for (i = 0; i < g.upperCount; i++) {
         dot(g.cxOf.upper[i], g.upperY0 + p.upperDY[i], COLOR.metalDark, 2.6);
       }
@@ -731,20 +750,16 @@
 
     // The movable block, and the hook it carries the load on.
     if (g.hasLower) {
-      cx = g.sideBySide ? g.cxOf.lower[0] : g.cx;
       var tieLow = g.nodes[0].kind === "end" && g.nodes[0].on === "lower";
-      for (i = 0; i < g.lowerCount; i++) {
-        drawWheel(g, g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i], p.R.lower[i]);
-      }
       var hookTop = g.lowerLast + p.lowerLastR + g.clearRope;
-      drawStrap(g, cx, tieLow ? g.lowerTieY : g.lowerY0, hookTop);
+      drawStrap(g, cxL, tieLow ? g.lowerTieY : g.lowerY0, hookTop);
       for (i = 0; i < g.lowerCount; i++) {
         dot(g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i], COLOR.metalDark, 2.6);
       }
-      drawHook(g, cx, hookTop);
+      drawHook(g, cxL, hookTop);
     }
 
-    drawRope(g);
+    drawBecket(g);
     drawLoad(g);
     drawEffort(g);
     drawTensions(g);
@@ -754,6 +769,7 @@
       W - 12, H - 16, COLOR.note, "right", "middle", 11);
   }
 
+
   /* ------------------------------------------------------------------
      Numbers
      ------------------------------------------------------------------ */
@@ -762,12 +778,19 @@
     return String(Math.round(x * 100) / 100);
   }
 
+  // The velocity ratio is fixed by the number of strands; the efficiency
+  // is set; so the mechanical advantage follows from eta = M.A. / V.R.,
+  // and the effort from it. An ideal machine gives back M.A. = V.R.
+  function advantage(S) { return (state.eff / 100) * S; }
+  function effortOf(S) { return state.load / advantage(S); }
+
   function sub(ch) { return "<sub>" + ch + "</sub>"; }
 
   var workRows = null;
 
   function buildWork(S) {
-    var L = state.load, E = L / S;
+    var L = state.load, MA = advantage(S), E = effortOf(S);
+    var ideal = state.eff >= 100;
     var html = "";
     function row(name, value, klass, id) {
       html += '<div class="line ' + (klass || "") + '"><span class="name">' +
@@ -775,16 +798,18 @@
         (id ? 'id="' + id + '"' : "") + ">" + value + "</span></div>";
     }
     row("Strands supporting the load", S, "key");
-    row("Effort  E = L / " + S, fmtNum(E) + " kgf");
-    row("M.A. = L / E", fmtNum(L) + " / " + fmtNum(E) + " = " + S, "key");
     row("V.R. = d" + sub("E") + " / d" + sub("L"), S, "key");
-    row("Efficiency  &eta; = M.A. / V.R.", "100 %");
+    row("Efficiency  &eta;", fmtNum(state.eff) + " %");
+    row("M.A. = &eta; &times; V.R.", fmtNum(MA), "key");
+    row("Effort  E = L / M.A.", fmtNum(E) + " kgf");
     row("d" + sub("L") + "  (load rises)", "0 m", "", "wDL");
     row("d" + sub("E") + "  (effort moves)", "0 m", "", "wDE");
     row("Work in  = E &times; d" + sub("E"), "0 J", "energy", "wIn");
     row("Work out = L &times; d" + sub("L"), "0 J", "energy", "wOut");
+    if (!ideal) row("Lost to friction", "0 J", "", "wLost");
     $("work").innerHTML = html;
-    workRows = { dL: $("wDL"), dE: $("wDE"), win: $("wIn"), wout: $("wOut") };
+    workRows = { dL: $("wDL"), dE: $("wDE"), win: $("wIn"), wout: $("wOut"),
+      lost: $("wLost") };
   }
 
   function updateWork(S) {
@@ -792,10 +817,13 @@
     var dL = state.lift * LIFT_M;
     var dE = dL * S;
     var LN = state.load * G;
+    var win = effortOf(S) * G * dE;
+    var wout = LN * dL;
     workRows.dL.textContent = fmtNum(dL) + " m";
     workRows.dE.textContent = fmtNum(dE) + " m";
-    workRows.win.textContent = fmtNum((LN / S) * dE) + " J";
-    workRows.wout.textContent = fmtNum(LN * dL) + " J";
+    workRows.win.textContent = fmtNum(win) + " J";
+    workRows.wout.textContent = fmtNum(wout) + " J";
+    if (workRows.lost) workRows.lost.textContent = fmtNum(win - wout) + " J";
   }
 
   /* ------------------------------------------------------------------
@@ -876,6 +904,12 @@
 
   bind("load", "loadNum", function (v) {
     state.load = v;
+    syncPanel();
+    draw();
+  });
+
+  bind("eff", "effNum", function (v) {
+    state.eff = v;
     syncPanel();
     draw();
   });
