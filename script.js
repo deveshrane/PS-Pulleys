@@ -269,20 +269,35 @@
   // searched for: the column has to fit the sheet however many pulleys
   // are in it.
   function plan(g, rMin) {
-    var fan = Math.max(4.5, rMin * 0.34);
     var base = rMin + 3;
     var i, j;
+
+    // How far apart to set the strands. Each wheel ends up half a fan
+    // bigger than the one before, so on a tackle of six an unbounded fan
+    // would leave the top wheel twice the size of the bottom one and use
+    // up all the room the blocks need to close in. Capped so the widest
+    // strand is about half as far out again as the innermost.
+    var maxRank = 1;
+    for (i = 0; i < g.rank.length; i++) maxRank = Math.max(maxRank, g.rank[i]);
+    var fan = Math.max(5.5, Math.min(rMin * 0.38, 0.55 * base / maxRank));
 
     // Each strand's distance out from the middle of its block.
     var off = [];
     for (i = 0; i < g.segs; i++) off.push(base + g.rank[i] * fan);
 
-    // A wheel is sized to the nearer of the two strands it carries, so
-    // the rope sits on its rim and clears everything inside it.
+    // A wheel sits centred between the two strands it carries, and is
+    // sized to them. Sizing it to the nearer one instead left the wrap
+    // wider than it was tall on every second wheel, so the rope bulged
+    // off the rim rather than hugging it; centring makes each wrap a true
+    // half circle. The nudge off the middle of the block is at most half
+    // the fan, a few pixels, so the column still reads as a column.
     var R = { upper: [], lower: [] };
+    var nudge = { upper: [], lower: [] };
     for (j = 1; j < g.nodes.length - 1; j++) {
       var node = g.nodes[j];
-      R[node.on][node.i] = Math.min(off[j - 1], off[j]) - 3;
+      var a = off[j - 1], b = off[j];
+      R[node.on][node.i] = (a + b) / 2 - 3;
+      nudge[node.on][node.i] = g.side[j] * (b - a) / 2;
     }
 
     // Stack each block, allowing for the wheels being different sizes.
@@ -299,7 +314,7 @@
     var up = stack(R.upper), low = stack(R.lower);
 
     return {
-      fan: fan, off: off, R: R,
+      fan: fan, off: off, R: R, nudge: nudge,
       upperDY: up.dy, lowerDY: low.dy,
       upperR0: R.upper[0] || 0, lowerR0: R.lower[0] || 0,
       upperLastR: R.upper.length ? R.upper[R.upper.length - 1] : 0,
@@ -320,7 +335,7 @@
       W: W, H: H, nodes: nodes, segs: segs, flags: flags, S: S,
       ceilY: 32, head: 13, clear: 17, tie: 13, hook: 17, loadH: 34,
       clearRope: 7,                 // the rope wraps this far outside a rim
-      strapW: 10, sideBySide: state.mode === "redirect"
+      strapW: 8, sideBySide: state.mode === "redirect"
     };
 
     g.upperCount = 0; g.lowerCount = 0;
@@ -347,9 +362,9 @@
     var below = g.hook + g.loadH + 52;              // hook, load and its reading
     var room = H - g.ceilY - g.head - g.clear - below - 26;
     var p = null;
-    for (var t = 26; t >= 8; t -= 0.5) {
+    for (var t = 34; t >= 8; t -= 0.5) {
       p = plan(g, t);
-      var need = p.upperSpan + p.lowerSpan + (g.sideBySide ? 0 : 46);
+      var need = p.upperSpan + p.lowerSpan + (g.sideBySide ? 0 : 132);
       if (need <= room) break;
     }
     g.p = p;
@@ -371,7 +386,9 @@
     } else {
       g.cx = Math.max(padL + p.widest, Math.min(W - padR - p.widest, W / 2 - 24));
       g.cxOf = { lower: [], upper: [] };
-      for (j = 1; j < nodes.length - 1; j++) g.cxOf[nodes[j].on][nodes[j].i] = g.cx;
+      for (j = 1; j < nodes.length - 1; j++) {
+        g.cxOf[nodes[j].on][nodes[j].i] = g.cx + p.nudge[nodes[j].on][nodes[j].i];
+      }
       for (i = 0; i < segs; i++) g.strandX.push(g.cx + g.side[i] * p.off[i]);
     }
 
@@ -427,7 +444,9 @@
     g.handY = g.effortDown ? lastWheelY + g.tail : lastWheelY - g.tail;
     g.handY0 = g.effortDown ? lastWheelY0 + g.tail0 : lowerLast0 - g.tail0;
 
-    g.loadCx = g.hasLower ? g.cxOf.lower[g.lowerCount - 1] : g.strandX[0];
+    g.loadCx = g.hasLower
+      ? (g.sideBySide ? g.cxOf.lower[0] : g.cx)
+      : g.strandX[0];
     return g;
   }
 
@@ -565,9 +584,18 @@
       // Made off to a block, the end runs in to its strap; made off to the
       // support it simply stops there.
       if (first.on !== "ceiling") {
-        line(kx, ky, g.cx, ky, COLOR.support, 2.6, false);
+        // A straight lug off the strap, drawn as the hardware it is. The
+        // rope used to turn a right angle here to reach the strap, which
+        // read as a bend in the rope itself.
+        line(g.cx, ky, kx, ky, COLOR.metalDark, 3.4, false);
+        ctx.beginPath();
+        ctx.setLineDash([]);
+        ctx.arc(kx, ky, 4.5, 0, Math.PI * 2);
+        ctx.strokeStyle = COLOR.metalDark;
+        ctx.lineWidth = 2.4;
+        ctx.stroke();
       }
-      dot(kx, ky, COLOR.support, 4);
+      dot(kx, ky, COLOR.support, 3.4);
     }
   }
 
@@ -611,6 +639,17 @@
     var lo = mid - (g.S - 1) * step / 2;
     var seen = 0;
 
+    // The strands of a block run only a few pixels apart, so a letter set
+    // against one of them lands on its neighbour. The arrow stays on its
+    // own strand and the letter goes outside the whole bundle, level with
+    // it — each T reads across to the arrow at its own height.
+    var edge = { "-1": Infinity, "1": -Infinity };
+    for (var k = 0; k < g.segs; k++) {
+      var sx = g.strandX[k];
+      if (g.side[k] > 0) edge["1"] = Math.max(edge["1"], sx);
+      else edge["-1"] = Math.min(edge["-1"], sx);
+    }
+
     for (var i = 0; i < g.segs; i++) {
       if (!g.flags[i]) continue;
       var x = g.strandX[i];
@@ -621,8 +660,9 @@
       var y = Math.max(hi + 15, Math.min(low - 13, lo + seen * step));
       if (low - hi > 26) {
         arrow(x, y + 11, x, y - 11, COLOR.support, 1.8);
-        label("T", x + g.side[i] * 9, y, COLOR.support,
-          g.side[i] > 0 ? "left" : "right", "middle", 13);
+        var sd = g.side[i];
+        label("T", edge[String(sd)] + sd * 11, y, COLOR.support,
+          sd > 0 ? "left" : "right", "middle", 13);
       }
       seen++;
     }
@@ -674,7 +714,7 @@
     // The fixed block. Its strap runs from the crosshead down to the last
     // axle and stops there — it is a holder, not a spike through the wheel.
     if (g.hasUpper) {
-      cx = g.cxOf.upper[0];
+      cx = g.sideBySide ? g.cxOf.upper[0] : g.cx;
       var tieUp = g.nodes[0].kind === "end" && g.nodes[0].on === "upper";
       roundRect(cx - p.upperR0 - 7, g.ceilY, 2 * (p.upperR0 + 7), g.head, 4,
         COLOR.metalDark, null, 0);
@@ -691,7 +731,7 @@
 
     // The movable block, and the hook it carries the load on.
     if (g.hasLower) {
-      cx = g.cxOf.lower[0];
+      cx = g.sideBySide ? g.cxOf.lower[0] : g.cx;
       var tieLow = g.nodes[0].kind === "end" && g.nodes[0].on === "lower";
       for (i = 0; i < g.lowerCount; i++) {
         drawWheel(g, g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i], p.R.lower[i]);
@@ -701,7 +741,7 @@
       for (i = 0; i < g.lowerCount; i++) {
         dot(g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i], COLOR.metalDark, 2.6);
       }
-      drawHook(g, g.cxOf.lower[g.lowerCount - 1], hookTop);
+      drawHook(g, cx, hookTop);
     }
 
     drawRope(g);
