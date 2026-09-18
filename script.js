@@ -41,12 +41,6 @@
   // on p.70 use 9.8, so the value in force here is stated on the diagram.
   var G = 10;
 
-  // How far above or below a wheel a strand starts coming in to the rim.
-  // Fixed, so a lead is the same shape wherever the blocks happen to be:
-  // only the straight runs change length, which is what keeps the effort's
-  // travel an exact multiple of the load's.
-  var LEAD = 26;
-
   // How far the load rises at a full pull. Fixed in metres rather than in
   // pixels so the readings do not change with the size of the window.
   var LIFT_M = 0.5;
@@ -292,15 +286,15 @@
     var off = [];
     for (i = 0; i < g.segs; i++) off.push(base + g.rank[i] * fan);
 
-    // Every wheel sits on the middle of its block. It takes its size
-    // from the nearer of the two strands it carries, so that strand lies
-    // on the rim; the further one comes in to meet the rim over a short
-    // fixed lead, the way rope actually converges onto a sheave. The wrap
-    // itself is then a true half circle about the wheel's own centre.
+    // Every wheel sits on the middle of its block, sized to the mean of
+    // the two strands it carries. The rope then runs a little inside the
+    // rim where it comes on and a little outside where it goes off — it
+    // sits in the groove, rather than standing clear of the wheel on one
+    // side, which is what sizing to the nearer strand gave.
     var R = { upper: [], lower: [] };
     for (j = 1; j < g.nodes.length - 1; j++) {
       var node = g.nodes[j];
-      R[node.on][node.i] = Math.min(off[j - 1], off[j]) - 3;
+      R[node.on][node.i] = (off[j - 1] + off[j]) / 2 - 3;
     }
 
     // Stack each block, allowing for the wheels being different sizes.
@@ -338,8 +332,8 @@
 
     var g = {
       W: W, H: H, nodes: nodes, segs: segs, flags: flags, S: S,
-      ceilY: 32, head: 13, clear: 17, tie: 13, hook: 17, loadH: 34,
-      clearRope: 7,                 // the rope wraps this far outside a rim
+      ceilY: 32, head: 13, clear: 17, tie: 13, hook: 34, loadH: 34,
+      clearRope: 11,                // the rope wraps this far outside a rim
       strapW: 8, sideBySide: state.mode === "redirect"
     };
 
@@ -364,7 +358,7 @@
     if (g.sideBySide) { g.side = [-1, -1, 1]; g.rank = [0, 0, 0]; }
 
     // Take the biggest wheels the sheet will hold.
-    var below = g.hook + g.loadH + 52;              // hook, load and its reading
+    var below = 34 + g.loadH + 52;                  // hook, load and its reading
     var room = H - g.ceilY - g.head - g.clear - below - 26;
     var p = null;
     for (var t = 34; t >= 8; t -= 0.5) {
@@ -374,6 +368,8 @@
     }
     g.p = p;
     g.r0 = p.upperR0 || p.lowerR0;
+    // A hook in proportion to the block it hangs under, not a fixed stub.
+    g.hook = Math.max(20, Math.min(34, (p.lowerR0 || p.upperR0) * 0.62));
 
     // Where the wheels sit across the sheet, and where each strand runs.
     var padL = 118, padR = 124;
@@ -409,10 +405,9 @@
     var lowerLast0 = g.loadTopY0 - g.hook - p.lowerLastR - g.clearRope;
     g.lowerY00 = lowerLast0 - (p.lowerDY[g.lowerCount - 1] || 0);
 
-    // The blocks must stop far enough apart that the straight run of
-    // every strand between them survives both its leads.
+    // The blocks must stop with daylight between their rims.
     var stopAt = g.hasUpper
-      ? g.upperTieY + p.lowerR0 + 2 * LEAD + 16
+      ? g.upperTieY + p.lowerR0 + 26
       : g.ceilY + p.lowerR0 + 30;
     var carrier0 = g.hasLower ? g.lowerY00 : g.loadTopY0;
     var headroom = Math.max(0, carrier0 - stopAt);
@@ -529,7 +524,7 @@
   }
 
   function drawHook(g, cx, topY) {
-    var hr = g.hook * 0.42;
+    var hr = g.hook * 0.46;
     var cy = topY + g.hook - hr;
     line(cx, topY, cx, cy, COLOR.metalDark, 3.4, false);
     ctx.beginPath();
@@ -545,31 +540,28 @@
   // Half an ellipse from the strand coming in across to the one going
   // out, clearing the rim. Drawn in two halves so the wheel that takes a
   // load-bearing strand in and lets the effort out is shown as both.
-  // An upper wheel is wrapped over the top, so both its strands hang
-  // below it; a lower wheel the other way about.
-  function leadDir(node) {
-    return node.kind !== "pulley" ? 0 : (node.on === "upper" ? 1 : -1);
-  }
-
-  // Where strand i stops being straight, at whichever of its two ends.
-  function strandEnd(g, i, which) {
-    var node = g.nodes[i + which];
-    return { x: g.strandX[i], y: nodeY(node, g) + leadDir(node) * LEAD };
-  }
-
-  // A true half circle about the wheel's own centre, drawn in two
-  // quarters so a wheel that takes a load-bearing strand in and lets the
-  // effort out is shown as both.
-  function drawWrap(cx, cy, rho, above, sIn, colIn, colOut) {
-    var steps = 28, k = above ? -1 : 1;
+  // The rope comes onto a sheave at whatever distance its own strand
+  // stands off, and leaves at the other's. The wrap eases between the two
+  // with a smoothstep, whose slope is zero at each end — so it meets each
+  // strand running exactly along that strand's line. Easing linearly, or
+  // running a true circle and bending the strand in to meet it, both put
+  // a visible corner where rope and wheel join.
+  //
+  // Drawn in two halves so a wheel that takes a load-bearing strand in
+  // and lets the effort out is shown as both.
+  function drawWrap(cx, cy, oIn, oOut, above, sIn, colIn, colOut) {
+    var steps = 44, k = above ? -1 : 1;
     ctx.lineCap = "round";
     for (var half = 0; half < 2; half++) {
       ctx.beginPath();
       ctx.setLineDash([]);
       for (var i = 0; i <= steps / 2; i++) {
-        var a = Math.PI * (half * steps / 2 + i) / steps;
-        var x = cx + sIn * rho * Math.cos(a);
-        var y = cy + k * rho * Math.sin(a);
+        var t = (half * steps / 2 + i) / steps;
+        var u = t * t * (3 - 2 * t);
+        var rr = oIn + (oOut - oIn) * u;
+        var a = Math.PI * t;
+        var x = cx + sIn * rr * Math.cos(a);
+        var y = cy + k * rr * Math.sin(a);
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.strokeStyle = half === 0 ? colIn : colOut;
@@ -581,24 +573,23 @@
 
   function drawRope(g) {
     var i;
+    // Straight runs, from one wheel's centre height to the next. The wrap
+    // picks the rope up exactly on the strand's own line, so there is
+    // nothing between the two.
     for (i = 0; i < g.segs; i++) {
-      var a = strandEnd(g, i, 0), b = strandEnd(g, i, 1);
-      line(a.x, a.y, b.x, b.y, g.flags[i] ? COLOR.support : COLOR.effort, 2.6, false);
+      var x = g.strandX[i];
+      line(x, nodeY(g.nodes[i], g), x, nodeY(g.nodes[i + 1], g),
+        g.flags[i] ? COLOR.support : COLOR.effort, 2.6, false);
     }
     for (i = 1; i < g.nodes.length - 1; i++) {
       var node = g.nodes[i];
       var cx = wheelX(g, node), wy = nodeY(node, g);
-      var rho = wheelR(g, node) + 3;
-      var above = node.on === "upper", dir = above ? 1 : -1;
       var xIn = g.strandX[i - 1], xOut = g.strandX[i];
-      var sIn = xIn < cx ? -1 : 1, sOut = xOut < cx ? -1 : 1;
-      var cIn = g.flags[i - 1] ? COLOR.support : COLOR.effort;
-      var cOut = g.flags[i] ? COLOR.support : COLOR.effort;
-      // The lead: the further strand comes in to meet the rim. The nearer
-      // one already lies on it, and its lead is simply vertical.
-      line(xIn, wy + dir * LEAD, cx + sIn * rho, wy, cIn, 2.6, false);
-      line(xOut, wy + dir * LEAD, cx + sOut * rho, wy, cOut, 2.6, false);
-      drawWrap(cx, wy, rho, above, sIn, cIn, cOut);
+      var sIn = xIn < cx ? -1 : 1;
+      drawWrap(cx, wy, Math.abs(xIn - cx), Math.abs(xOut - cx),
+        node.on === "upper", sIn,
+        g.flags[i - 1] ? COLOR.support : COLOR.effort,
+        g.flags[i] ? COLOR.support : COLOR.effort);
     }
   }
 
@@ -666,7 +657,7 @@
 
     for (var i = 0; i < g.segs; i++) {
       var x = g.strandX[i];
-      var a = strandEnd(g, i, 0).y, b = strandEnd(g, i, 1).y;
+      var a = nodeY(g.nodes[i], g), b = nodeY(g.nodes[i + 1], g);
       var hi = Math.min(a, b), low = Math.max(a, b);
       if (low - hi < 28) continue;
       // Kept on its own strand: a short one — the free end of a movable
