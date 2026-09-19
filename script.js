@@ -404,7 +404,11 @@
     var floorY = H - 62;
     g.loadBaseY0 = floorY;
     g.loadTopY0 = floorY - g.loadH;
-    var lowerLast0 = g.loadTopY0 - g.hook - p.lowerLastR - g.clearRope;
+    // ... the block's ring, then the load's hanger running up through it.
+    g.ringR = Math.max(7, g.hook * 0.3);
+    g.hanger = 10;
+    var lowerLast0 = g.loadTopY0 - g.hanger - g.hook
+      - p.lowerLastR - g.clearRope;
     g.lowerY00 = lowerLast0 - (p.lowerDY[g.lowerCount - 1] || 0);
 
     // The blocks must stop with daylight between their rims.
@@ -433,6 +437,10 @@
 
     g.lowerY0 = g.lowerY00 - g.d;
     g.lowerLast = lowerLast0 - g.d;
+    // Everything below the sheaves rides with them: strap foot, ring, the
+    // load's hanger and the load itself are one rigid group.
+    g.hookTop = g.lowerLast + p.lowerLastR + g.clearRope;
+    g.ringY = g.hookTop + g.hook - g.ringR;
     g.lowerTieY = g.lowerY0 - p.lowerR0 - g.tie;
     g.loadTopY = g.loadTopY0 - g.d;
     g.loadBaseY = g.loadBaseY0 - g.d;
@@ -525,18 +533,17 @@
     ctx.stroke();
   }
 
-  function drawHook(g, cx, topY) {
-    var hr = g.hook * 0.46;
-    var cy = topY + g.hook - hr;
-    line(cx, topY, cx, cy, COLOR.metalDark, 3.4, false);
+  // A closed ring on the foot of the block, with the load's own hanger
+  // running up through it. An open hook left a gap between the tackle and
+  // the load, so nothing held it up.
+  function drawHook(g, cx) {
+    line(cx, g.hookTop, cx, g.ringY - g.ringR, COLOR.metalDark, 3.6, false);
     ctx.beginPath();
     ctx.setLineDash([]);
-    ctx.arc(cx, cy, hr, Math.PI * 0.85, Math.PI * 0.15, false);
+    ctx.arc(cx, g.ringY, g.ringR, 0, Math.PI * 2);
     ctx.strokeStyle = COLOR.metalDark;
     ctx.lineWidth = 3;
-    ctx.lineCap = "round";
     ctx.stroke();
-    ctx.lineCap = "butt";
   }
 
   // Half an ellipse from the strand coming in across to the one going
@@ -579,8 +586,8 @@
     // picks the rope up exactly on the strand's own line, so there is
     // nothing between the two.
     for (i = 0; i < g.segs; i++) {
-      var x = g.strandX[i];
-      line(x, nodeY(g.nodes[i], g), x, nodeY(g.nodes[i + 1], g),
+      var a = strandPoint(g, i, 0), b = strandPoint(g, i, 1);
+      line(a.x, a.y, b.x, b.y,
         g.flags[i] ? COLOR.support : COLOR.effort, 2.6, false);
     }
     for (i = 1; i < g.nodes.length - 1; i++) {
@@ -595,40 +602,48 @@
     }
   }
 
-  // The becket the dead end is made off to: a plate across the end of the
-  // block, as there is at its head, with the eye hanging from it upright
-  // and in line with the rope. A bar reaching sideways out of the strap
-  // read as a spike, and left the eye tucked in under the sheave where
-  // there was no room for it.
+  // The becket the dead end is made off to: an eye on the head of the
+  // block's own strap, on its centreline. Set off to one side the pull
+  // would twist the block, and the plate it used to stand on was wider
+  // than the rope bundle, so strands ran straight through it.
   function drawBecket(g) {
     var first = g.nodes[0];
     if (first.kind !== "end" || first.on === "load") return;
-    var kx = g.strandX[0], ky = nodeY(first, g);
-    if (first.on === "ceiling") { dot(kx, ky, COLOR.support, 3.6); return; }
+    var ky = nodeY(first, g);
+    if (first.on === "ceiling") { dot(g.strandX[0], ky, COLOR.support, 3.6); return; }
 
-    var cx = g.sideBySide
-      ? g.cxOf[first.on][0]
-      : g.cx;
-    var back = first.on === "upper" ? -1 : 1;      // back towards the block
-    var r0 = first.on === "upper" ? g.p.upperR0 : g.p.lowerR0;
-    var half = Math.max(Math.abs(kx - cx) + 9, r0 * 0.55);
-    var plateY = ky + back * 14;
-
-    roundRect(cx - half, plateY - 5, 2 * half, 10, 4, COLOR.metalDark, null, 0);
-    line(kx, plateY, kx, ky, COLOR.metalDark, 3.2, false);
+    var cx = beckettX(g, first);
     ctx.beginPath();
     ctx.setLineDash([]);
-    ctx.arc(kx, ky, 5.5, 0, Math.PI * 2);
+    ctx.arc(cx, ky, 6.5, 0, Math.PI * 2);
     ctx.strokeStyle = COLOR.metalDark;
-    ctx.lineWidth = 2.4;
+    ctx.lineWidth = 3;
     ctx.stroke();
-    dot(kx, ky, COLOR.support, 3.2);
+    dot(cx, ky, COLOR.support, 3.2);
+  }
+
+  function beckettX(g, node) {
+    return g.sideBySide ? g.cxOf[node.on][0] : g.cx;
+  }
+
+  // Both ends of a strand sit on its own line, except the dead end, which
+  // is made off on the block's centreline — so that strand runs up to its
+  // sheave at a slight angle instead of straight.
+  function strandPoint(g, i, which) {
+    var node = g.nodes[i + which];
+    if (node.kind === "end" && (node.on === "upper" || node.on === "lower")) {
+      return { x: beckettX(g, node), y: nodeY(node, g) };
+    }
+    return { x: g.strandX[i], y: nodeY(node, g) };
   }
 
   function drawLoad(g) {
     var cx = g.loadCx;
     var topY = g.loadTopY;
     var w = 62;
+    // The load's hanger, run up through the block's ring. Drawn before the
+    // ring so the ring closes over it and the two read as linked.
+    if (g.hasLower) line(cx, g.ringY, cx, topY + 2, COLOR.metalDark, 3.6, false);
     roundRect(cx - w / 2, topY, w, g.loadH, 4, COLOR.load, null, 0);
     label("L", cx, topY + g.loadH / 2, "#f8fafc", "center", "middle", 15);
     arrow(cx, topY + g.loadH + 8, cx, topY + g.loadH + 30, COLOR.load, 2);
@@ -747,7 +762,7 @@
       roundRect(cxU - p.upperR0 - 8, g.ceilY, 2 * (p.upperR0 + 8), g.head, 4,
         COLOR.metalDark, null, 0);
       drawStrap(g, cxU, g.ceilY + g.head - 2,
-        tieUp ? g.upperTieY - 14 : g.upperLast);
+        tieUp ? g.upperTieY : g.upperLast);
       for (i = 0; i < g.upperCount; i++) {
         dot(g.cxOf.upper[i], g.upperY0 + p.upperDY[i], COLOR.metalDark, 2.6);
       }
@@ -756,16 +771,15 @@
     // The movable block, and the hook it carries the load on.
     if (g.hasLower) {
       var tieLow = g.nodes[0].kind === "end" && g.nodes[0].on === "lower";
-      var hookTop = g.lowerLast + p.lowerLastR + g.clearRope;
-      drawStrap(g, cxL, tieLow ? g.lowerTieY + 14 : g.lowerY0, hookTop);
+      drawStrap(g, cxL, tieLow ? g.lowerTieY : g.lowerY0, g.hookTop);
       for (i = 0; i < g.lowerCount; i++) {
         dot(g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i], COLOR.metalDark, 2.6);
       }
-      drawHook(g, cxL, hookTop);
     }
 
     drawBecket(g);
     drawLoad(g);
+    if (g.hasLower) drawHook(g, cxL);
     drawEffort(g);
     drawTensions(g);
     drawDistances(g);
