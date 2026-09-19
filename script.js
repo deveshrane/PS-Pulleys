@@ -376,8 +376,10 @@
       // turns the effort downward. Every strand lies on a rim, so the two
       // centres stand exactly a rim's width apart.
       var rL = p.R.lower[0], rU = p.R.upper[0];
-      var cxL = Math.max(padL + rL, Math.min(W - padR - rU - (rL + rU),
-        W / 2 - (rL + rU) / 2 - 20));
+      // Centred on what is actually drawn, which runs from the movable
+      // pulley's outer rim to the fixed one's.
+      var cxL = Math.max(padL + rL,
+        Math.min(W - padR - rL - 2 * rU, W / 2 - rU));
       var cxU = cxL + rL + rU;
       g.cxOf = { lower: [cxL], upper: [cxU] };
       g.strandX = [cxL - rL, cxL + rL, cxU + rU];
@@ -386,18 +388,31 @@
       // The fixed block stands one step to the right of the movable one.
       // That offset and the step in the radii are the same number, which
       // is what puts every strand on both the rims it touches.
-      g.cx = Math.max(padL + p.widest, Math.min(W - padR - p.widest, W / 2 - 24));
-      var xU = g.cx + p.step / 2, xL = g.cx - p.step / 2;
+      //
+      // The rope is not symmetric about the blocks — it reaches further
+      // out on the effort's side — so the whole thing is laid out once
+      // about zero, and then shifted to put what is drawn in the middle
+      // of the sheet.
+      function strandsAbout(centre) {
+        var xU = centre + p.step / 2, xL = centre - p.step / 2, out = [];
+        for (var k = 0; k < segs; k++) {
+          // Either end of a strand gives the same line; take whichever
+          // end is a sheave.
+          var at = nodes[k].kind === "pulley" ? k : k + 1;
+          out.push((nodes[at].on === "upper" ? xU : xL) + g.side[k] * p.radius[at]);
+        }
+        return out;
+      }
+      var about0 = strandsAbout(0);
+      var lo = Math.min.apply(null, about0), hi = Math.max.apply(null, about0);
+      g.cx = Math.max(padL - lo, Math.min(W - padR - hi, W / 2 - (lo + hi) / 2));
+
+      var xU2 = g.cx + p.step / 2, xL2 = g.cx - p.step / 2;
       g.cxOf = { lower: [], upper: [] };
       for (j = 1; j < nodes.length - 1; j++) {
-        g.cxOf[nodes[j].on][nodes[j].i] = nodes[j].on === "upper" ? xU : xL;
+        g.cxOf[nodes[j].on][nodes[j].i] = nodes[j].on === "upper" ? xU2 : xL2;
       }
-      for (i = 0; i < segs; i++) {
-        // Either end of a strand gives the same line; take whichever end
-        // is a sheave.
-        var at = nodes[i].kind === "pulley" ? i : i + 1;
-        g.strandX.push(wheelX(g, nodes[at]) + g.side[i] * p.radius[at]);
-      }
+      g.strandX = strandsAbout(g.cx);
     }
 
     // The fixed block, hung from the support. The crosshead stands clear
@@ -524,7 +539,7 @@
   }
 
   // The rope lies on the rim, so the sheave is simply a disc of that
-  // radius, with a lightening hole to show how far it has turned.
+  // radius.
   function drawWheel(g, cx, cy, r) {
     ctx.beginPath();
     ctx.setLineDash([]);
@@ -533,11 +548,6 @@
     ctx.fill();
     ctx.strokeStyle = COLOR.wheel;
     ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx + r * 0.45, cy, Math.max(3, r * 0.22), 0, Math.PI * 2);
-    ctx.strokeStyle = COLOR.wheel;
-    ctx.lineWidth = 1.3;
     ctx.stroke();
   }
 
