@@ -280,21 +280,21 @@
     // strand is about half as far out again as the innermost.
     var maxRank = 1;
     for (i = 0; i < g.rank.length; i++) maxRank = Math.max(maxRank, g.rank[i]);
-    var fan = Math.max(5.5, Math.min(rMin * 0.38, 0.55 * base / maxRank));
+    var fan = Math.max(5.5, Math.min(rMin * 0.3, 0.45 * base / maxRank));
 
     // Each strand's distance out from the middle of its block.
     var off = [];
     for (i = 0; i < g.segs; i++) off.push(base + g.rank[i] * fan);
 
-    // Every wheel sits on the middle of its block, sized to the mean of
-    // the two strands it carries. The rope then runs a little inside the
-    // rim where it comes on and a little outside where it goes off — it
-    // sits in the groove, rather than standing clear of the wheel on one
-    // side, which is what sizing to the nearer strand gave.
+    // The rim is drawn at the mean of the two strands a wheel carries, so
+    // where they differ the rope crosses it — a little inside as it comes
+    // on, the same amount outside as it goes off. That reads as rope in a
+    // groove. Sizing the rim clear of both strands instead leaves the rope
+    // standing off the wheel on one side, which is what looks wrong.
     var R = { upper: [], lower: [] };
     for (j = 1; j < g.nodes.length - 1; j++) {
       var node = g.nodes[j];
-      R[node.on][node.i] = (off[j - 1] + off[j]) / 2 - 3;
+      R[node.on][node.i] = (off[j - 1] + off[j]) / 2;
     }
 
     // Stack each block, allowing for the wheels being different sizes.
@@ -332,7 +332,7 @@
 
     var g = {
       W: W, H: H, nodes: nodes, segs: segs, flags: flags, S: S,
-      ceilY: 32, head: 13, clear: 17, tie: 13, hook: 34, loadH: 34,
+      ceilY: 32, head: 13, clear: 17, tie: 31, hook: 34, loadH: 34,
       clearRope: 11,                // the rope wraps this far outside a rim
       strapW: 8, sideBySide: state.mode === "redirect"
     };
@@ -377,12 +377,14 @@
     if (g.sideBySide) {
       // Fig 3.22: the movable pulley, and a fixed one beside it that only
       // turns the effort downward.
+      // Both wheels are the same size here and every strand lies on a
+      // rim, so the two centres stand exactly a rim's width apart.
       var rL = p.R.lower[0], rU = p.R.upper[0];
-      var cxL = Math.max(padL + rL + 3, Math.min(W - padR - rU - 3 - (rL + rU + 6),
+      var cxL = Math.max(padL + rL, Math.min(W - padR - rU - (rL + rU),
         W / 2 - (rL + rU) / 2 - 20));
-      var cxU = cxL + rL + rU + 6;
+      var cxU = cxL + rL + rU;
       g.cxOf = { lower: [cxL], upper: [cxU] };
-      g.strandX = [cxL - rL - 3, cxL + rL + 3, cxU + rU + 3];
+      g.strandX = [cxL - rL, cxL + rL, cxU + rU];
       g.cx = cxL;
     } else {
       g.cx = Math.max(padL + p.widest, Math.min(W - padR - p.widest, W / 2 - 24));
@@ -593,23 +595,34 @@
     }
   }
 
-  // The becket the dead end is made off to: a straight lug off the strap,
-  // drawn as the hardware it is. Laid over the rope, like the rest of the
-  // block.
+  // The becket the dead end is made off to: a plate across the end of the
+  // block, as there is at its head, with the eye hanging from it upright
+  // and in line with the rope. A bar reaching sideways out of the strap
+  // read as a spike, and left the eye tucked in under the sheave where
+  // there was no room for it.
   function drawBecket(g) {
     var first = g.nodes[0];
     if (first.kind !== "end" || first.on === "load") return;
     var kx = g.strandX[0], ky = nodeY(first, g);
-    if (first.on !== "ceiling") {
-      line(g.cx, ky, kx, ky, COLOR.metalDark, 3.4, false);
-      ctx.beginPath();
-      ctx.setLineDash([]);
-      ctx.arc(kx, ky, 4.5, 0, Math.PI * 2);
-      ctx.strokeStyle = COLOR.metalDark;
-      ctx.lineWidth = 2.4;
-      ctx.stroke();
-    }
-    dot(kx, ky, COLOR.support, 3.4);
+    if (first.on === "ceiling") { dot(kx, ky, COLOR.support, 3.6); return; }
+
+    var cx = g.sideBySide
+      ? g.cxOf[first.on][0]
+      : g.cx;
+    var back = first.on === "upper" ? -1 : 1;      // back towards the block
+    var r0 = first.on === "upper" ? g.p.upperR0 : g.p.lowerR0;
+    var half = Math.max(Math.abs(kx - cx) + 9, r0 * 0.55);
+    var plateY = ky + back * 14;
+
+    roundRect(cx - half, plateY - 5, 2 * half, 10, 4, COLOR.metalDark, null, 0);
+    line(kx, plateY, kx, ky, COLOR.metalDark, 3.2, false);
+    ctx.beginPath();
+    ctx.setLineDash([]);
+    ctx.arc(kx, ky, 5.5, 0, Math.PI * 2);
+    ctx.strokeStyle = COLOR.metalDark;
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+    dot(kx, ky, COLOR.support, 3.2);
   }
 
   function drawLoad(g) {
@@ -733,7 +746,8 @@
       var tieUp = g.nodes[0].kind === "end" && g.nodes[0].on === "upper";
       roundRect(cxU - p.upperR0 - 8, g.ceilY, 2 * (p.upperR0 + 8), g.head, 4,
         COLOR.metalDark, null, 0);
-      drawStrap(g, cxU, g.ceilY + g.head - 2, tieUp ? g.upperTieY : g.upperLast);
+      drawStrap(g, cxU, g.ceilY + g.head - 2,
+        tieUp ? g.upperTieY - 14 : g.upperLast);
       for (i = 0; i < g.upperCount; i++) {
         dot(g.cxOf.upper[i], g.upperY0 + p.upperDY[i], COLOR.metalDark, 2.6);
       }
@@ -743,7 +757,7 @@
     if (g.hasLower) {
       var tieLow = g.nodes[0].kind === "end" && g.nodes[0].on === "lower";
       var hookTop = g.lowerLast + p.lowerLastR + g.clearRope;
-      drawStrap(g, cxL, tieLow ? g.lowerTieY : g.lowerY0, hookTop);
+      drawStrap(g, cxL, tieLow ? g.lowerTieY + 14 : g.lowerY0, hookTop);
       for (i = 0; i < g.lowerCount; i++) {
         dot(g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i], COLOR.metalDark, 2.6);
       }
