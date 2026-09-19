@@ -25,6 +25,7 @@
     metalDark: "#475569",
     wheel: "#0f6f93",
     wheelFill: "#e0f2fe",
+    groove: "#b9dcf0",       // the band the rope runs in
     support: "#0f766e",        // strands that carry the load
     effort: "#b45309",         // the strand the effort is applied to
     load: "#1e293b",
@@ -269,59 +270,62 @@
   // wheel size. Returned separately from layout so the size can be
   // searched for: the column has to fit the sheet however many pulleys
   // are in it.
-  function plan(g, rMin) {
-    var base = rMin + 3;
+  // Every sheave in a block is the same, and its rope runs in a groove at
+  // one radius the whole way round — so the rope never crosses the face of
+  // a wheel, and the sheaves sit in a line on the block's centre.
+  //
+  // Same-side strands would then lie on top of one another, so between the
+  // blocks each is eased out to a line of its own, far enough apart to be
+  // counted, and eased back in as it reaches the next sheave. Both easings
+  // are fixed shapes: only the straight middle changes length as the
+  // blocks close up, which is what keeps the effort's travel an exact
+  // multiple of the load's.
+  function plan(g, rho) {
     var i, j;
-
-    // How far apart to set the strands. Each wheel ends up half a fan
-    // bigger than the one before, so on a tackle of six an unbounded fan
-    // would leave the top wheel twice the size of the bottom one and use
-    // up all the room the blocks need to close in. Capped so the widest
-    // strand is about half as far out again as the innermost.
     var maxRank = 1;
     for (i = 0; i < g.rank.length; i++) maxRank = Math.max(maxRank, g.rank[i]);
-    var fan = Math.max(5.5, Math.min(rMin * 0.3, 0.45 * base / maxRank));
 
-    // Each strand's distance out from the middle of its block.
+    var flange = rho + 3;
+    var body = rho - 3;
+
+    // How far the strands stand outside the flange, and how far apart.
+    var stand = 9;
+    var fan = Math.max(6, Math.min(rho * 0.3, 0.7 * rho / maxRank));
+
     var off = [];
-    for (i = 0; i < g.segs; i++) off.push(base + g.rank[i] * fan);
+    for (i = 0; i < g.segs; i++) off.push(flange + stand + g.rank[i] * fan);
 
-    // The rim is drawn at the mean of the two strands a wheel carries, so
-    // where they differ the rope crosses it — a little inside as it comes
-    // on, the same amount outside as it goes off. That reads as rope in a
-    // groove. Sizing the rim clear of both strands instead leaves the rope
-    // standing off the wheel on one side, which is what looks wrong.
-    var R = { upper: [], lower: [] };
+    // All the sheaves are alike, so a block is a plain stack of them.
+    var pitch = 2 * flange + 10;
+    function stack(count) {
+      var dy = [];
+      for (var k = 0; k < count; k++) dy.push(k * pitch);
+      return { dy: dy, span: count ? (count - 1) * pitch + 2 * flange : 0 };
+    }
+    var up = stack(g.upperCount), low = stack(g.lowerCount);
+
+    // A sheave's neighbours in its own block are a pitch away, so a strand
+    // has finished easing in long before it passes one of them.
+    var lead = Math.min(30, pitch * 0.42);
+
+    var R = { upper: [], lower: [] }, Rin = { upper: [], lower: [] };
     for (j = 1; j < g.nodes.length - 1; j++) {
       var node = g.nodes[j];
-      R[node.on][node.i] = (off[j - 1] + off[j]) / 2;
+      R[node.on][node.i] = flange;
+      Rin[node.on][node.i] = body;
     }
-
-    // Stack each block, allowing for the wheels being different sizes.
-    // Rims are set far enough apart that the wraps, which stand three
-    // pixels off each rim, cannot touch.
-    var sp = 13;
-    function stack(list) {
-      if (!list.length) return { dy: [], span: 0 };
-      var dy = [0];
-      for (var k = 1; k < list.length; k++) {
-        dy.push(dy[k - 1] + list[k - 1] + list[k] + sp);
-      }
-      var n = list.length - 1;
-      return { dy: dy, span: list[0] + dy[n] + list[n] };
-    }
-    var up = stack(R.upper), low = stack(R.lower);
 
     return {
-      fan: fan, off: off, R: R,
+      rho: rho, flange: flange, body: body, fan: fan, off: off, lead: lead,
+      R: R, Rin: Rin, pitch: pitch,
       upperDY: up.dy, lowerDY: low.dy,
-      upperR0: R.upper[0] || 0, lowerR0: R.lower[0] || 0,
-      upperLastR: R.upper.length ? R.upper[R.upper.length - 1] : 0,
-      lowerLastR: R.lower.length ? R.lower[R.lower.length - 1] : 0,
+      upperR0: flange, lowerR0: flange,
+      upperLastR: flange, lowerLastR: flange,
       upperSpan: up.span, lowerSpan: low.span,
-      widest: off.length ? Math.max.apply(null, off) : 0
+      widest: off.length ? Math.max.apply(null, off) : flange
     };
   }
+
 
   function layout(W, H) {
     var nodes = route(state.mode, state.n);
@@ -379,7 +383,7 @@
       // turns the effort downward.
       // Both wheels are the same size here and every strand lies on a
       // rim, so the two centres stand exactly a rim's width apart.
-      var rL = p.R.lower[0], rU = p.R.upper[0];
+      var rL = p.off[0], rU = p.off[2];        // where the rope runs
       var cxL = Math.max(padL + rL, Math.min(W - padR - rU - (rL + rU),
         W / 2 - (rL + rU) / 2 - 20));
       var cxU = cxL + rL + rU;
@@ -460,7 +464,6 @@
     return g;
   }
 
-  function wheelR(g, node) { return g.p.R[node.on][node.i]; }
   function wheelX(g, node) { return g.cxOf[node.on][node.i]; }
 
   function yAt(node, g, d) {
@@ -517,17 +520,29 @@
       COLOR.metal, COLOR.metalDark, 1.3);
   }
 
-  function drawWheel(g, cx, cy, r) {
+  // A sheave seen from the side: the flange standing proud, and the
+  // bottom of the groove inside it. The rope runs in the band between
+  // them, which is why its distance from the axle changes round the wrap.
+  function drawWheel(g, cx, cy, rIn, rOut) {
     ctx.beginPath();
     ctx.setLineDash([]);
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.arc(cx, cy, rOut, 0, Math.PI * 2);
+    ctx.fillStyle = COLOR.groove;
+    ctx.fill();
+    ctx.strokeStyle = COLOR.wheel;
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, rIn, 0, Math.PI * 2);
     ctx.fillStyle = COLOR.wheelFill;
     ctx.fill();
     ctx.strokeStyle = COLOR.wheel;
     ctx.lineWidth = 2;
     ctx.stroke();
+
     ctx.beginPath();
-    ctx.arc(cx, cy, Math.max(3, r * 0.42), 0, Math.PI * 2);
+    ctx.arc(cx, cy, Math.max(3, rIn * 0.42), 0, Math.PI * 2);
     ctx.strokeStyle = COLOR.wheel;
     ctx.lineWidth = 1.1;
     ctx.stroke();
@@ -549,28 +564,21 @@
   // Half an ellipse from the strand coming in across to the one going
   // out, clearing the rim. Drawn in two halves so the wheel that takes a
   // load-bearing strand in and lets the effort out is shown as both.
-  // The rope comes onto a sheave at whatever distance its own strand
-  // stands off, and leaves at the other's. The wrap eases between the two
-  // with a smoothstep, whose slope is zero at each end — so it meets each
-  // strand running exactly along that strand's line. Easing linearly, or
-  // running a true circle and bending the strand in to meet it, both put
-  // a visible corner where rope and wheel join.
-  //
-  // Drawn in two halves so a wheel that takes a load-bearing strand in
-  // and lets the effort out is shown as both.
-  function drawWrap(cx, cy, oIn, oOut, above, sIn, colIn, colOut) {
-    var steps = 44, k = above ? -1 : 1;
+  var smooth = function (t) { return t * t * (3 - 2 * t); };
+
+  // Half a circle in the groove, at the one radius the rope runs at on
+  // every sheave. Drawn in two quarters so a wheel that takes a
+  // load-bearing strand in and lets the effort out is shown as both.
+  function drawWrap(cx, cy, rho, above, sIn, colIn, colOut) {
+    var steps = 36, k = above ? -1 : 1;
     ctx.lineCap = "round";
     for (var half = 0; half < 2; half++) {
       ctx.beginPath();
       ctx.setLineDash([]);
       for (var i = 0; i <= steps / 2; i++) {
-        var t = (half * steps / 2 + i) / steps;
-        var u = t * t * (3 - 2 * t);
-        var rr = oIn + (oOut - oIn) * u;
-        var a = Math.PI * t;
-        var x = cx + sIn * rr * Math.cos(a);
-        var y = cy + k * rr * Math.sin(a);
+        var a = Math.PI * (half * steps / 2 + i) / steps;
+        var x = cx + sIn * rho * Math.cos(a);
+        var y = cy + k * rho * Math.sin(a);
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.strokeStyle = half === 0 ? colIn : colOut;
@@ -580,23 +588,85 @@
     ctx.lineCap = "butt";
   }
 
+  // Where strand i leaves whatever is at one of its ends: the lip of a
+  // sheave's groove, the becket on a block's centreline, or simply the
+  // point itself for the hand and for an end made off to the support.
+  function anchorX(g, node, x) {
+    if (node.kind === "pulley") {
+      var cx = wheelX(g, node);
+      return cx + (x < cx ? -1 : 1) * g.p.rho;
+    }
+    if (node.kind === "end" && (node.on === "upper" || node.on === "lower")) {
+      return beckettX(g, node);
+    }
+    return x;
+  }
+
+  // The line a strand runs along: out of one groove, easing across to its
+  // own line so it can be told from its neighbours, straight down the
+  // middle, then easing back into the next groove. Both easings have zero
+  // slope where they meet the straight, so there is no corner anywhere.
+  function strandRun(g, i) {
+    var x = g.strandX[i];
+    var a = g.nodes[i], b = g.nodes[i + 1];
+    var ya = nodeY(a, g), yb = nodeY(b, g);
+    var top = ya <= yb ? a : b, bot = ya <= yb ? b : a;
+    var yTop = Math.min(ya, yb), yBot = Math.max(ya, yb);
+    var xTop = anchorX(g, top, x), xBot = anchorX(g, bot, x);
+    var span = yBot - yTop;
+    function leadFor(node, xe) {
+      if (Math.abs(xe - x) < 0.01) return 0;
+      // A dead end is made off on the centreline, a long way in from the
+      // strand's line, so give it further to fair out.
+      var want = node.kind === "end" ? 70 : g.p.lead;
+      return Math.min(want, span * 0.42);
+    }
+    return { x: x, yTop: yTop, yBot: yBot, xTop: xTop, xBot: xBot,
+      lTop: leadFor(top, xTop), lBot: leadFor(bot, xBot) };
+  }
+
+  function strandPoints(r) {
+    var pts = [], k, t;
+    if (r.lTop > 0) {
+      for (k = 0; k <= 12; k++) {
+        t = k / 12;
+        pts.push([r.xTop + (r.x - r.xTop) * smooth(t), r.yTop + r.lTop * t]);
+      }
+    } else pts.push([r.x, r.yTop]);
+    pts.push([r.x, r.yBot - r.lBot]);
+    if (r.lBot > 0) {
+      for (k = 1; k <= 12; k++) {
+        t = k / 12;
+        pts.push([r.x + (r.xBot - r.x) * smooth(t), (r.yBot - r.lBot) + r.lBot * t]);
+      }
+    }
+    return pts;
+  }
+
   function drawRope(g) {
     var i;
     // Straight runs, from one wheel's centre height to the next. The wrap
     // picks the rope up exactly on the strand's own line, so there is
     // nothing between the two.
     for (i = 0; i < g.segs; i++) {
-      var a = strandPoint(g, i, 0), b = strandPoint(g, i, 1);
-      line(a.x, a.y, b.x, b.y,
-        g.flags[i] ? COLOR.support : COLOR.effort, 2.6, false);
+      var pts = strandPoints(strandRun(g, i));
+      ctx.beginPath();
+      ctx.setLineDash([]);
+      for (var k = 0; k < pts.length; k++) {
+        if (k === 0) ctx.moveTo(pts[k][0], pts[k][1]);
+        else ctx.lineTo(pts[k][0], pts[k][1]);
+      }
+      ctx.strokeStyle = g.flags[i] ? COLOR.support : COLOR.effort;
+      ctx.lineWidth = 2.6;
+      ctx.lineCap = "round";
+      ctx.stroke();
+      ctx.lineCap = "butt";
     }
     for (i = 1; i < g.nodes.length - 1; i++) {
       var node = g.nodes[i];
-      var cx = wheelX(g, node), wy = nodeY(node, g);
-      var xIn = g.strandX[i - 1], xOut = g.strandX[i];
-      var sIn = xIn < cx ? -1 : 1;
-      drawWrap(cx, wy, Math.abs(xIn - cx), Math.abs(xOut - cx),
-        node.on === "upper", sIn,
+      var cx = wheelX(g, node);
+      drawWrap(cx, nodeY(node, g), g.p.rho, node.on === "upper",
+        g.strandX[i - 1] < cx ? -1 : 1,
         g.flags[i - 1] ? COLOR.support : COLOR.effort,
         g.flags[i] ? COLOR.support : COLOR.effort);
     }
@@ -624,17 +694,6 @@
 
   function beckettX(g, node) {
     return g.sideBySide ? g.cxOf[node.on][0] : g.cx;
-  }
-
-  // Both ends of a strand sit on its own line, except the dead end, which
-  // is made off on the block's centreline — so that strand runs up to its
-  // sheave at a slight angle instead of straight.
-  function strandPoint(g, i, which) {
-    var node = g.nodes[i + which];
-    if (node.kind === "end" && (node.on === "upper" || node.on === "lower")) {
-      return { x: beckettX(g, node), y: nodeY(node, g) };
-    }
-    return { x: g.strandX[i], y: nodeY(node, g) };
   }
 
   function drawLoad(g) {
@@ -685,8 +744,8 @@
 
     for (var i = 0; i < g.segs; i++) {
       var x = g.strandX[i];
-      var a = nodeY(g.nodes[i], g), b = nodeY(g.nodes[i + 1], g);
-      var hi = Math.min(a, b), low = Math.max(a, b);
+      var run = strandRun(g, i);
+      var hi = run.yTop + run.lTop, low = run.yBot - run.lBot;
       if (low - hi < 28) continue;
       // Kept on its own strand: a short one — the free end of a movable
       // pulley at rest, say — has nowhere near the middle of the diagram.
@@ -747,10 +806,12 @@
     // behind the block, which is what a side view of a real one shows —
     // the strap and the crosshead stand between you and the groove.
     for (i = 0; i < g.upperCount; i++) {
-      drawWheel(g, g.cxOf.upper[i], g.upperY0 + p.upperDY[i], p.R.upper[i]);
+      drawWheel(g, g.cxOf.upper[i], g.upperY0 + p.upperDY[i],
+        p.Rin.upper[i], p.R.upper[i]);
     }
     for (i = 0; i < g.lowerCount; i++) {
-      drawWheel(g, g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i], p.R.lower[i]);
+      drawWheel(g, g.cxOf.lower[i], g.lowerY0 + p.lowerDY[i],
+        p.Rin.lower[i], p.R.lower[i]);
     }
 
     drawRope(g);
